@@ -7,6 +7,10 @@
 #include "llvm/IR/PassManager.h"
 
 #include "llvm/IR/Dominators.h"
+
+
+#include "llvm/IR/DebugInfoMetadata.h"
+
 using namespace llvm;
 
 
@@ -20,20 +24,41 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
     
     for (Loop *L : LI) {
         // Sets to store variables
-        std::set<std::string> insideLoopVars;
-        std::set<std::string> outsideLoopVars;
         std::set<std::string> declaredInsideLoopVars;
-
         std::set<std::string> assignedBeforeLoopVars;
         std::set<std::string> assignedOutsideLoopVars;
+
         std::set<std::string> assignedInsideLoopVars;
+        std::set<std::string> assignedInsideLoopVectors;
+        std::set<std::string> assignedInsideLoopArrays;
+        std::set<std::string> assignedInsideLoopBasicTypes;
 
         BasicBlock *Preheader = L->getLoopPreheader();
         BasicBlock *Header = L->getHeader();
 
+        std::string iterationVariable;
+
         if (!Preheader) {
             errs() << "Loop does not have a preheader, skipping.\n";
             continue;
+        }
+
+        // Get the first instruction in the conditional block
+        if (!Header->empty()) {
+            Instruction &FirstInst = Header->front();
+            if (auto *SI = dyn_cast<LoadInst>(&FirstInst)) {
+                if (Value *Ptr = SI->getPointerOperand()) {
+                    if (Ptr->hasName()) {
+                        errs() << "Iteration variable: " << Ptr->getName() << "\n";
+                        iterationVariable = Ptr->getName().str();
+                    }
+                }
+            }
+            errs() << "First instruction in the conditional block: ";
+            FirstInst.print(errs());
+            errs() << "\n";
+        } else {
+            errs() << "Conditional block is empty.\n";
         }
 
         // Find all blocks that dominate the preheader
@@ -55,60 +80,53 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
         // Collect variables used inside the loop
         for (BasicBlock *BB : L->blocks()) {
             for (Instruction &I : *BB) {
-                if (auto *SI = dyn_cast<StoreInst>(&I)) {
-                    if (Value *Ptr = SI->getPointerOperand()) {
-                        if (Ptr->hasName()) {
-                            assignedInsideLoopVars.insert(Ptr->getName().str());
-                        }
-                    }
-                }
-
                 if (auto *AI = dyn_cast<AllocaInst>(&I)) {
                     if (AI->hasName()) {
                         declaredInsideLoopVars.insert(AI->getName().str());
                     }
                 }
-                for (Use &U : I.operands()) {
-                    if (Value *V = U.get()) {
-                        if (V->hasName()) {
-                            insideLoopVars.insert(V->getName().str());
+
+                // Instruction that assign array location to a variable
+                if (auto *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
+                    if (GEPI->hasName()) {
+                        declaredInsideLoopVars.insert(GEPI->getName().str());
+                    }
+                }
+
+                if (auto *SI = dyn_cast<StoreInst>(&I)) {
+                    if (Value *Ptr = SI->getPointerOperand()) {
+
+                        if (!Ptr->hasName()) {
+                            continue;    
                         }
+                        std::string varName = Ptr->getName().str();
+
+                        if (varName == iterationVariable) {
+                            continue; // Skip the iteration variable
+                        }
+
+                        assignedInsideLoopVars.insert(varName);
+                        
+                        Type *Ty = Ptr->getType();
+
+                        // Check if it's an array
+                        if (Ty->isArrayTy()) {
+                            assignedInsideLoopArrays.insert(varName);
+                        }
+                        // // Check if it's a vector
+                        // else if (Ty->isVectorTy()) {
+                        //     assignedInsideLoopVectors.insert(varName);
+                        // }
+                        // Check if it's a basic type (int, float, etc.)
+                        else if (Ty->isSingleValueType()) {
+                            assignedInsideLoopBasicTypes.insert(varName);
+                        }
+                        // TODO: include pointer conditions
                     }
                 }
             }
         }
 
-        // Collect variables used outside the loop
-        for (BasicBlock &BB : F) {
-            if (!L->contains(&BB)) { // Only consider blocks outside the loop
-                for (Instruction &I : BB) {
-
-                    if (auto *SI = dyn_cast<StoreInst>(&I)) {
-                        if (Value *Ptr = SI->getPointerOperand()) {
-                            if (Ptr->hasName()) {
-                                assignedOutsideLoopVars.insert(Ptr->getName().str());
-                            }
-                        }
-                    }
-
-                    for (Use &U : I.operands()) {
-                        if (Value *V = U.get()) {
-                            if (V->hasName()) {
-                                outsideLoopVars.insert(V->getName().str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Compute the intersection of variables
-        // std::set<std::string> intersection;
-        // for (const auto &Var : insideLoopVars) {
-        //     if (outsideLoopVars.find(Var) != outsideLoopVars.end()) {
-        //         intersection.insert(Var);
-        //     }
-        // }
 
         std::set<std::string> intersection;
         for (const auto &Var : assignedBeforeLoopVars) {
@@ -117,20 +135,35 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
             }
         }
 
-        // Print the results
-        errs() << "Loop:\n" << L->getHeader()->getName() << "\n";
-        errs() << "  Variables inside the loop:\n";
-        for (const auto &Var : insideLoopVars) {
-            errs() << "    " << Var << "\n";
+        
+        
+        std::set<std::string> dangerousVars;
+        for (const auto &Var : assignedInsideLoopBasicTypes) {
+            if (declaredInsideLoopVars.find(Var) == declaredInsideLoopVars.end()) {
+                dangerousVars.insert(Var);
+            }
         }
 
-        errs() << "  Variables outside the loop:\n";
-        for (const auto &Var : outsideLoopVars) {
-            errs() << "    " << Var << "\n";
-        }
+        // Print the results
+        errs() << "Loop:\n" << L->getHeader()->getName() << "\n";
 
         errs() << "  Variables assigned inside the loop:\n";
         for (const auto &Var : assignedInsideLoopVars) {
+            errs() << "    " << Var << "\n";
+        }
+
+        errs() << "  Variables assigned inside the loop (arrays):\n";
+        for (const auto &Var : assignedInsideLoopArrays) {
+            errs() << "    " << Var << "\n";
+        }
+
+        errs() << "  Variables assigned inside the loop (vectors):\n";
+        for (const auto &Var : assignedInsideLoopVectors) {
+            errs() << "    " << Var << "\n";
+        }
+
+        errs() << "  Variables assigned inside the loop (basic types):\n";
+        for (const auto &Var : assignedInsideLoopBasicTypes) {
             errs() << "    " << Var << "\n";
         }
 
@@ -143,6 +176,38 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
         for (const auto &Var : intersection) {
             errs() << "    " << Var << "\n";
         }
+
+        errs() << "  Variables declared inside the loop:\n";
+        for (const auto &Var : declaredInsideLoopVars) {
+            errs() << "    " << Var << "\n";
+        }
+
+        errs() << " Dangerous variables:\n";
+        for (const auto &Var : dangerousVars) {
+            errs() << "    " << Var << "\n";
+        }
+
+        for (Instruction &I : *Header) {
+            if (DILocation *Loc = I.getDebugLoc()) { // Check if debug info exists
+                unsigned Line = Loc->getLine();      // Get the line number
+                StringRef File = Loc->getFilename(); // Get the source file name
+                StringRef Directory = Loc->getDirectory(); // Get the directory
+    
+                errs() << "Loop declared at " << Directory << "/" << File
+                       << ":" << Line << "\n";
+                break; // Found the debug info, no need to check further
+            }
+        }
+
+        
+
+        if(dangerousVars.size() > 0) {
+            errs() << "Loop CANNOT be parallelized" << "\n";
+            // continue;
+        } else {
+            errs() << "Loop CAN be parallelized" << "\n";
+        }
+
     }
     return PreservedAnalyses::all();
 }
