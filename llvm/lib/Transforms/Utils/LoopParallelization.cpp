@@ -91,6 +91,11 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
                     if (GEPI->hasName()) {
                         declaredInsideLoopVars.insert(GEPI->getName().str());
                     }
+                    if (Value *Ptr = GEPI->getPointerOperand()) {
+                        if (Ptr->hasName()) {
+                            assignedInsideLoopArrays.insert(Ptr->getName().str());
+                        }
+                    }
                 }
 
                 if (auto *SI = dyn_cast<StoreInst>(&I)) {
@@ -203,6 +208,10 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
 
         if(dangerousVars.size() > 0) {
             errs() << "Loop CANNOT be parallelized" << "\n";
+            errs() << "Dangerous variables: " << "\n";
+            for (const auto &Var : dangerousVars) {
+                errs() << "    " << Var << "\n";
+            }
             // continue;
         } else {
             errs() << "Loop CAN be parallelized" << "\n";
