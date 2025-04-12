@@ -13,42 +13,39 @@
 
 using namespace llvm;
 
-
+// Function to check if two values are equivalent
 bool areValuesEquivalent(Value *V1, Value *V2) {
-    if (V1 == V2) return true; // Same Value object
-
-    // If one is null and the other is not, they aren't equivalent
-    if (!V1 || !V2) return false;
-
-    // errs() << "reached here 0\n";
-
+    if (V1 == V2){
+        return true;
+    }
+    if (!V1 || !V2){
+        return false;
+    }
     Instruction *I1 = dyn_cast<Instruction>(V1);
     Instruction *I2 = dyn_cast<Instruction>(V2);
 
-    // errs() << "reached here 1\n";
     if (!I1 || !I2) {
-        // One or both are not instructions (e.g., constants, function arguments)
-        // This is a simplification. You'd need to handle these cases more
-        // comprehensively.  For example, compare constant values.
         if (isa<Constant>(V1) && isa<Constant>(V2)) {
-            return V1 == V2; // check if the Constant pointer addresses match
+            return V1 == V2;
         }
-        return false; // for now, assume not equivalent
+        return false;
     }
-    // errs() << "reached here 2\n";
 
-    if (I1->getOpcode() != I2->getOpcode()) return false; // Different opcodes
+    if (I1->getOpcode() != I2->getOpcode()){
+        return false;
+    }
 
     // Compare operands recursively
-    if (I1->getNumOperands() != I2->getNumOperands()) return false;
+    if (I1->getNumOperands() != I2->getNumOperands()){
+        return false;
+    }
     for (unsigned i = 0, e = I1->getNumOperands(); i != e; ++i) {
         if (!areValuesEquivalent(I1->getOperand(i), I2->getOperand(i))) {
             return false;
         }
     }
 
-
-    return true; // If we get here, the values are likely equivalent
+    return true;
 }
 
 
@@ -87,8 +84,8 @@ bool isLoopIndexIterationVariable(Value *index_, Value *V) {
     return false;
 }
 
+// Function to get the iteration variable from the loop header
 Value* getIterationVariable(BasicBlock *Header) {
-    // Get the iteration variable of the loop
     if (!Header->empty()) {
         Instruction &FirstInst = Header->front();
         if (auto *SI = dyn_cast<LoadInst>(&FirstInst)) {
@@ -99,7 +96,6 @@ Value* getIterationVariable(BasicBlock *Header) {
             }
         }
     } else {
-        // return "";
         errs() << "Conditional block is empty.\n";
     }
 }
@@ -136,9 +132,10 @@ void handleVariables(Instruction &I,
             }
             std::string varName = Ptr->getName().str();
 
-            // Skip the iteration variable
             if (varName == iterationVariable) {
-                return;
+                return; // Skip the iteration variable
+            } else if (arrayAddressPtrs->find(varName) != arrayAddressPtrs->end()) {
+                return; // Skip array address pointers
             }
 
             loadedInsideLoopVars->insert(varName);
@@ -153,11 +150,11 @@ void handleVariables(Instruction &I,
             std::string varName = Ptr->getName().str();
 
 
-            // Skip the iteration variable
+            
             if (varName == iterationVariable) {
-                return;
+                return; // Skip the iteration variable
             } else if (arrayAddressPtrs->find(varName) != arrayAddressPtrs->end()) {
-                return;
+                return; // Skip array address pointers
             }
 
             if(loadedInsideLoopVars->find(varName) == loadedInsideLoopVars->end()) {
@@ -168,96 +165,17 @@ void handleVariables(Instruction &I,
                     errs() << "Location: " << getLocationString(SI->getDebugLoc()) << "\n\n";
                 }
             }
-
-            // Type *Ty = Ptr->getType();
-            // // Check if it's a vector
-            // else if (Ty->isVectorTy()) {
-            //     assignedInsideLoopVectors.insert(varName);
-            // }
-
-            // Check if it's a basic type (int, float, etc.)
-            // if (Ty->isSingleValueType()) {
-            //     assignedInsideLoopBasicTypes.insert(varName);
-            // }
-        }
-    }
-}
-
-void handleVariables_new(Instruction &I,
-    const std::string iterationVariable) {
-
-    if (auto *SI = dyn_cast<StoreInst>(&I)) {
-        // Check if it assigns to a variable
-        if (auto *Ptr = SI->getPointerOperand()) {
-            if (!Ptr->hasName()) {
-                return;    
-            }
-            errs() << "Variable: " << Ptr->getName() << "\n";
-            // Get pointer uses
-            for (auto &U : Ptr->uses()) {
-                if (auto *User = dyn_cast<Instruction>(U.getUser())) {
-                    if (User->hasName()) {
-                        errs() << "Variable use: " << User->getName() << "\n";
-                    }
-                }
-            }
-            
-            if (auto *LI = dyn_cast<LoadInst>(Ptr)) {
-                if (LI->hasName()) {
-                    errs() << "LOAD Variable: " << LI->getName() << "\n";
-                }
-                if (auto *Var = LI->getPointerOperand()) {
-                    if (Var == Ptr) {
-                        errs() << "1 DANGER: Variable \'" << Ptr->getName() << "\' was stored after being loaded.\n";
-                    }
-                    if (Var->getName() == Ptr->getName()) {
-                        errs() << "2 DANGER: Variable \'" << Ptr->getName() << "\' was stored after being loaded.\n";
-                    }
-                }
-            }
         }
     }
 }
 
 void handleArrays(Instruction &I,
                     Value* iterationVariable,
-                    std::set<std::string>* assignedInsideLoopArrays,
-                    std::set<std::string>* assignedInsideLoopVars,
+                    std::set<std::string>* initializedInsideLoopVars,
                     std::set<std::string>* loadedInsideLoopVars,
                     std::set<std::string>* arrayAddressPtrs,
                     std::set<Value*>* assignedInsideArrayAddressPtrs,
                     std::set<Value*>* loadedInsideArrayAddressPtrs) {
-    // // Instruction that assign array location to a variable
-    // if (auto *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
-    //     if (GEPI->hasName()) {
-    //         arrayAddressPtrs->insert(GEPI->getName().str());
-    //     }
-    //     if (Value *Ptr = GEPI->getPointerOperand()) {
-    //         if (Ptr->hasName()) {
-    //             assignedInsideLoopArrays->insert(Ptr->getName().str());
-    //         }
-    //     }
-
-    //     if (Value *index = GEPI->getOperand(1)) {
-    //         if (index->hasName()) {
-    //             // assignedInsideLoopArrays->insert(index->getName().str());
-    //             errs() << "Array index: " << index->getName() << "\n";
-    //             // errs() << index->getContext().diagnose() << "\n";
-    //             // errs() << index->getType() << "\n";
-    //             // errs() << index << "\n";
-    //         }
-    //     }
-
-    //     if (Value *index = GEPI->getOperand(2)) {
-    //         if (index->hasName()) {
-    //             // assignedInsideLoopArrays->insert(index->getName().str());
-    //             errs() << "Array index: " << index->getName() << "\n";
-    //             // errs() << index->getContext().diagnose() << "\n";
-    //             // errs() << index->getType(). << "\n";
-    //             // errs() << index << "\n";
-    //         }
-    //     }
-    // }
 
     // Check if the instruction is a store instruction
     if (auto *SI = dyn_cast<StoreInst>(&I)) {
@@ -269,28 +187,33 @@ void handleArrays(Instruction &I,
             }
             
             if (auto *GEPI = dyn_cast<GetElementPtrInst>(Ptr)) {
-                if (GEPI->hasName()) {
-                    errs() << "Array address pointer: " << GEPI->getName() << "\n";
-                }
+                arrayAddressPtrs->insert(GEPI->getName().str());
 
-                std::string loopName = "undefined loop";
+                std::string arrayName = "undefined loop";
                 if (Value *Ptr = GEPI->getPointerOperand()) {
                     if (Ptr->hasName()) {
-                        loopName = Ptr->getName().str();
+                        arrayName = Ptr->getName().str();
                     }
                 }
 
                 if (Value *index = GEPI->getOperand(2)) {
-                    if (!isLoopIndexIterationVariable(index, iterationVariable)) {
-                        assignedInsideLoopVars->insert(index->getName().str());
+                    if (!isLoopIndexIterationVariable(index, iterationVariable)) { // TODO handle this
+                        if (loadedInsideLoopVars->find(index->getName().str()) == loadedInsideLoopVars->end()) {
+                            initializedInsideLoopVars->insert(index->getName().str());
+                        } else {
+                            if (initializedInsideLoopVars->find(index->getName().str()) == initializedInsideLoopVars->end()) {
+                                errs() << "DANGER: Address in array \'" << arrayName << "\' was stored after being loaded.\n";
+                                errs() << "Location: " << getLocationString(SI->getDebugLoc()) << "\n\n";
+                            }
+                        }
                     }
 
                     assignedInsideArrayAddressPtrs->insert(index);
 
-                    for (Value *loadedValues : *loadedInsideArrayAddressPtrs) {
+                    for (Value *loadedValue : *loadedInsideArrayAddressPtrs) {
 
-                        if (!areValuesEquivalent(loadedValues, index)) {
-                            errs() << "DANGER: Array \""<< loopName << "\" is loading and storing with 2 different indexes\n";
+                        if (!areValuesEquivalent(loadedValue, index)) {
+                            errs() << "DANGER: Array \""<< arrayName << "\" is loading and storing with 2 different indexes\n";
                             errs() << "Location: " << getLocationString(SI->getDebugLoc()) << "\n\n";
                         }
                     }
@@ -307,32 +230,24 @@ void handleArrays(Instruction &I,
             }
             
             if (auto *GEPI = dyn_cast<GetElementPtrInst>(Ptr)) {
-                if (GEPI->hasName()) {
-                    errs() << "Array address pointer: " << GEPI->getName() << "\n";
-                }
 
-
-                std::string loopName = "undefined loop";
+                std::string arrayName = "undefined loop";
                 if (Value *Ptr = GEPI->getPointerOperand()) {
                     if (Ptr->hasName()) {
-                        loopName = Ptr->getName().str();
+                        arrayName = Ptr->getName().str();
                     }
                 }
 
                 if (Value *index = GEPI->getOperand(2)) {
-                    if (index->hasName()) {
-                        errs() << "Array index: " << index->getName() << "\n";
-                    }
-
                     if (!isLoopIndexIterationVariable(index, iterationVariable)) {
                         loadedInsideLoopVars->insert(index->getName().str());
                     }
 
                     loadedInsideArrayAddressPtrs->insert(index);
 
-                    for (Value *assignedValues : *assignedInsideArrayAddressPtrs) {
-                        if (!areValuesEquivalent(assignedValues, index)) {
-                            errs() << "DANGER: Array \""<< loopName << "\" is loading and storing with 2 different indexes\n";
+                    for (Value *assignedValue : *assignedInsideArrayAddressPtrs) {
+                        if (!areValuesEquivalent(assignedValue, index)) {
+                            errs() << "DANGER: Array \""<< arrayName << "\" is loading and storing with 2 different indexes\n";
                             errs() << "Location: " << getLocationString(SI->getDebugLoc()) << "\n\n";
                         }
                     }
@@ -341,52 +256,20 @@ void handleArrays(Instruction &I,
         }
     }
 }
-                    // if (!index->getType()->isIntegerTy()) {
-                    //     errs() << "Array index is not an integer type: " << *index->getType() << "\n";
-                    // }
-                    // if (auto *LI = dyn_cast<LoadInst>(index)) {
-                    //     if (LI->hasName()) {
-                    //         errs() << "LOAD Array index: " << LI->getName() << "\n";
-                    //     }
-                    // } else if (auto *SI = dyn_cast<StoreInst>(index)) {
-                    //     if (SI->hasName()) {
-                    //         errs() << "STORE Array index: " << SI->getName() << "\n";
-                    //     }
-                    // } else if (auto *SEXTI = dyn_cast<CastInst>(index)) {
-                    //     if (SEXTI->hasName()) {
-                    //         errs() << "SEXT Array index 1: " << SEXTI->getName() << "\n";
-                    //     }
-                    //     if (int a = SEXTI->getNumOperands()) {
-                    //         errs() << "SEXT Array index 4: " << a << "\n";
-                    //     }
-
-                    //     if (auto *Assign = SEXTI->getOperand(0)) {
-                    //         indexAssignments.insert(Assign);
-                    //         // if (auto *Var = dyn_cast<Constant>(Assign)) {
-                    //         //     if (Var->hasName()) {
-                    //         //         errs() << "SEXT Array index 2: " << Var->getName() << "\n"; // TODO: handle as a variable
-                    //         //     }
-                    //         // }
-                    //         // else if (auto *LI = dyn_cast<LoadInst>(Assign)) {
-                    //         //     if (Value *Ptr = LI->getPointerOperand()) {
-                    //         //         if (Ptr->hasName()) {
-                    //         //             errs() << "SEXT Array index 2: " << Ptr->getName() << "\n";
-                    //         //         }
-                    //         //     }
-                                
-                    //         // }
-
-                    //     }
-
-                    // }
-                    // else {
-                    //     errs() << "Array index: " << index->getType() << "\n";
-                    // }
 
 
 PreservedAnalyses LoopParallelizationPass::run(Function &F,
   FunctionAnalysisManager &AM) {
-    errs() << "Hello" << "\n";
+
+    if (F.isDeclaration()) {
+        return PreservedAnalyses::all();
+    }
+
+    if (F.getLinkage() != GlobalValue::ExternalLinkage) {
+        // Function is likely not from analyzed file, skip it.
+        return PreservedAnalyses::all();
+    }
+
     auto &LI = AM.getResult<LoopAnalysis>(F);
     auto &DT = AM.getResult<DominatorTreeAnalysis>(F);
     // OS << "Loop info for function '" << F.getName() << "':\n";
@@ -395,22 +278,12 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
     for (Loop *L : LI) {
         Value* iterationVariable;
 
-        std::set<std::string> declaredInsideLoopVars;
-        std::set<std::string> assignedBeforeLoopVars;
-        std::set<std::string> assignedOutsideLoopVars;
-
         std::set<std::string> initializedInsideLoopVars;
-        std::set<std::string> assignedInsideLoopVars;
         std::set<std::string> loadedInsideLoopVars;
-
-        std::set<std::string> assignedInsideLoopVectors;
-        std::set<std::string> assignedInsideLoopArrays;
-        std::set<std::string> assignedInsideLoopBasicTypes;
 
         std::set<std::string> arrayAddressPtrs;
         std::set<Value*> assignedInsideArrayAddressPtrs;
         std::set<Value*> loadedInsideArrayAddressPtrs;
-        // TODO check if loop address points to something other than i
 
         BasicBlock *Preheader = L->getLoopPreheader();
         BasicBlock *Header = L->getHeader();
@@ -424,45 +297,21 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
         errs() << "Location: " << getLoopLocationString(Header) << "\n\n";
 
         iterationVariable = getIterationVariable(Header);
-        errs() << "Iteration variable: " << *iterationVariable << "\n\n";
+        if (!iterationVariable) {
+            errs() << "No iteration variable found in loop header.\n";
+            continue;
+        }
+        
+        errs() << "Iteration variable: " << iterationVariable->getName().str() << "\n\n";
 
         // Collect variables used inside the loop
         for (BasicBlock *BB : L->blocks()) {
             for (Instruction &I : *BB) {
-                handleArrays(I, iterationVariable, &assignedInsideLoopArrays, &assignedInsideLoopVars, &loadedInsideLoopVars,  &arrayAddressPtrs, &assignedInsideArrayAddressPtrs, &loadedInsideArrayAddressPtrs);
-                
+                handleArrays(I, iterationVariable, &initializedInsideLoopVars, &loadedInsideLoopVars,  &arrayAddressPtrs, &assignedInsideArrayAddressPtrs, &loadedInsideArrayAddressPtrs);
                 
                 handleVariables(I, iterationVariable->getName().str(), &initializedInsideLoopVars, &loadedInsideLoopVars, &arrayAddressPtrs);  
                 // handleVariables_new(I, iterationVariable);
             }
-        }
-        
-        
-        std::set<std::string> dangerousVars;
-        for (const auto &Var : assignedInsideLoopBasicTypes) {
-            if (declaredInsideLoopVars.find(Var) == declaredInsideLoopVars.end()) {
-                dangerousVars.insert(Var);
-            }
-        }
-
-        errs() << "  Variables assigned inside the loop:\n";
-        for (const auto &Var : assignedInsideLoopVars) {
-            errs() << "    " << Var << "\n";
-        }
-
-        errs() << "  Variables assigned inside the loop (arrays):\n";
-        for (const auto &Var : assignedInsideLoopArrays) {
-            errs() << "    " << Var << "\n";
-        }
-
-        errs() << "  Variables assigned inside the loop (vectors):\n";
-        for (const auto &Var : assignedInsideLoopVectors) {
-            errs() << "    " << Var << "\n";
-        }
-
-        errs() << "  Variables assigned inside the loop (basic types):\n";
-        for (const auto &Var : assignedInsideLoopBasicTypes) {
-            errs() << "    " << Var << "\n";
         }
 
         errs() << "  Variables initialized inside the loop:\n";
@@ -483,92 +332,7 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
         for (const auto &Var : loadedInsideArrayAddressPtrs) {
             errs() << "    " << *Var << "\n";
         }
-        
-
-        if(dangerousVars.size() > 0) {
-            errs() << "Loop CANNOT be parallelized" << "\n";
-            errs() << "Dangerous variables: " << "\n";
-            for (const auto &Var : dangerousVars) {
-                errs() << "    " << Var << "\n";
-            }
-            // continue;
-        } else {
-            errs() << "Loop CAN be parallelized" << "\n";
-        }
 
     }
     return PreservedAnalyses::all();
 }
-  // errs() << "Hello"<<"\n";
-  // static int Counter = 1;
-  // unsigned int InstructionCount = 0;
-  //   errs() << "Function: " << F.getName() << "\n";
-  //   errs() << F.getEntryBlock().getName() << "\n";
-  //   // errs() <<  << "\n";
-  //   for (auto &Sym : *F.getValueSymbolTable()) {
-  //     errs() << "Symbol: " << Sym.getKey() << " : " << Sym.getValue() << "   " << Sym.getKeyData() << "\n";
-  //   }
-
-  // for( auto &BB : F){
-    
-  //   errs() << "Basic Block: " << BB.getName()<< " Parent: "<< BB.getParent()->getName() << "\n";
-  //   // Iterate through the instructions in the basic block
-  //   for (Instruction &I : BB) {
-  //     errs() << "  Instruction: " << I << "\n";
-  //   }
-  //   InstructionCount+=BB.size();
-
-  // }
-  // errs() << "Function #" << Counter++ << ": " << F.getName()
-  //   << " has " << InstructionCount << " instructions"<<"\n";
-  // return PreservedAnalyses::all();
-  
-
-
-
-  // LoopInfo &LI = AM.getResult<LoopAnalysis>(F);
-
-  // // Iterate through the loops in the function
-  // for (Loop *L : LI) {
-  //   errs() << "LoopParallelization: Found a loop in function " << F.getName() << "\n";
-
-  //   // Get the loop's basic blocks
-  //   //SmallVector<BasicBlock *, 8> LoopBasicBlocks;
-  //   ArrayRef<BasicBlock *> LoopBasicBlocks = L->getBlocks();
-
-  //   errs() << "LoopParallelization: Loop contains " << LoopBasicBlocks.size()
-  //           << " basic blocks\n";
-
-  //   // Iterate through the basic blocks in the loop
-  //   for (BasicBlock *BB : LoopBasicBlocks) {
-  //     errs() << "LoopParallelization:   Basic Block: " << BB->getName() << "\n";
-
-  //     // Iterate through the instructions in the basic block
-  //     for (Instruction &I : *BB) {
-  //       errs() << "LoopParallelization:     Instruction: " << I << "\n";
-  //     }
-  //   }
-  // }
-
-  // return PreservedAnalyses::all();
-
-
-// PassPluginLibraryInfo LoopParallelizationPass::getPluginInfo() {
-//   return {LLVM_PLUGIN_API_VERSION, "LoopParallelizationPass", LLVM_VERSION_STRING,
-//           [](PassBuilder &PB) {
-//             PB.registerPipelineParsingCallback(
-//                 [](StringRef Name, FunctionPassManager &FPM,
-//                    ArrayRef<PassBuilder::PipelineElement>) {
-//                   if (Name == "loop-parallelization") {
-//                     FPM.addPass(LoopParallelizationPass());
-//                     return true;
-//                   }
-//                   return false;
-//                 });
-//           }};
-// }
-
-// extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo
-// llvmGetPassPluginInfo() {
-//   return LoopParallelizationPass::getPluginInfo();
-// }
