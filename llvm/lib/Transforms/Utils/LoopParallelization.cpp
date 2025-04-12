@@ -14,6 +14,185 @@
 using namespace llvm;
 
 
+std::string getIterationVariable(BasicBlock *Header) {
+    // Get the iteration variable of the loop
+    if (!Header->empty()) {
+        Instruction &FirstInst = Header->front();
+        if (auto *SI = dyn_cast<LoadInst>(&FirstInst)) {
+            if (Value *Ptr = SI->getPointerOperand()) {
+                if (Ptr->hasName()) {
+                    return Ptr->getName().str();
+                }
+            }
+        }
+    } else {
+        return "";
+        errs() << "Conditional block is empty.\n";
+    }
+}
+
+std::string getLocationString(DILocation *Loc) {
+    if (Loc) {
+        unsigned Line = Loc->getLine();
+        StringRef File = Loc->getFilename();
+        StringRef Directory = Loc->getDirectory();
+        return (Directory + "/" + File + ":" + std::to_string(Line)).str();
+    }
+    return "No location info";
+}
+
+std::string getLoopLocationString(BasicBlock *Header) {
+    for (Instruction &I : *Header) {
+        if (DILocation *Loc = I.getDebugLoc()) { // Check if debug info exists
+            return getLocationString(Loc);
+        }
+    }
+}
+
+void handleVariables(Instruction &I,
+                    const std::string iterationVariable,
+                    std::set<std::string>* initializedInsideLoopVars,
+                    std::set<std::string>* loadedInsideLoopVars,
+                    std::set<std::string>* arrayAddressPtrs) {
+    // Check if the instruction is a load instruction
+    if (auto *LI = dyn_cast<LoadInst>(&I)) {
+        // Check if it loads from a variable
+        if (Value *Ptr = LI->getPointerOperand()) {
+            if (!Ptr->hasName()) {
+                return;
+            }
+            std::string varName = Ptr->getName().str();
+
+            // Skip the iteration variable
+            if (varName == iterationVariable) {
+                return;
+            }
+
+            loadedInsideLoopVars->insert(varName);
+        }
+    } else if (auto *SI = dyn_cast<StoreInst>(&I)) {
+        // Check if it assigns to a variable
+        if (Value *Ptr = SI->getPointerOperand()) {
+            if (!Ptr->hasName()) {
+                return;    
+            }
+        
+            std::string varName = Ptr->getName().str();
+
+
+            // Skip the iteration variable
+            if (varName == iterationVariable) {
+                return;
+            } else if (arrayAddressPtrs->find(varName) != arrayAddressPtrs->end()) {
+                return;
+            }
+
+            if(loadedInsideLoopVars->find(varName) == loadedInsideLoopVars->end()) {
+                initializedInsideLoopVars->insert(varName);
+            } else {
+                if (initializedInsideLoopVars->find(varName) == initializedInsideLoopVars->end()) {
+                    errs() << "DANGER: Variable \'" << varName << "\' was stored after being loaded.\n";
+                    errs() << "Location: " << getLocationString(SI->getDebugLoc()) << "\n\n";
+                }
+            }
+
+            // Type *Ty = Ptr->getType();
+            // // Check if it's a vector
+            // else if (Ty->isVectorTy()) {
+            //     assignedInsideLoopVectors.insert(varName);
+            // }
+
+            // Check if it's a basic type (int, float, etc.)
+            // if (Ty->isSingleValueType()) {
+            //     assignedInsideLoopBasicTypes.insert(varName);
+            // }
+        }
+    }
+}
+
+void handleArrays(Instruction &I,
+                    const std::string iterationVariable,
+                    std::set<std::string>* assignedInsideLoopArrays,
+                    std::set<std::string>* arrayAddressPtrs,
+                    std::set<std::string>* assignedInsideArrayAddressPtrs,
+                    std::set<std::string>* loadedInsideArrayAddressPtrs) {
+    // Instruction that assign array location to a variable
+    if (auto *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
+        if (GEPI->hasName()) {
+            arrayAddressPtrs->insert(GEPI->getName().str());
+        }
+        if (Value *Ptr = GEPI->getPointerOperand()) {
+            if (Ptr->hasName()) {
+                assignedInsideLoopArrays->insert(Ptr->getName().str());
+            }
+        }
+
+        if (Value *index = GEPI->getOperand(1)) {
+            if (index->hasName()) {
+                // assignedInsideLoopArrays->insert(index->getName().str());
+                errs() << "Array index: " << index->getName() << "\n";
+                // errs() << index->getContext().diagnose() << "\n";
+                // errs() << index->getType() << "\n";
+                // errs() << index << "\n";
+            }
+        }
+
+        if (Value *index = GEPI->getOperand(2)) {
+            if (index->hasName()) {
+                // assignedInsideLoopArrays->insert(index->getName().str());
+                errs() << "Array index: " << index->getName() << "\n";
+                // errs() << index->getContext().diagnose() << "\n";
+                // errs() << index->getType(). << "\n";
+                // errs() << index << "\n";
+            }
+        }
+    }
+
+    // Check if the instruction is a store instruction
+    if (auto *SI = dyn_cast<StoreInst>(&I)) {
+        // Check if it assigns to a variable
+        if (Value *Ptr = SI->getPointerOperand()) {
+
+            if (!Ptr->hasName()) {
+                return;   
+            }
+            
+            // if (Value *GEPI = dyn_cast<GetElementPtrInst>(Ptr)) {
+            //     if (GEPI->hasName()) {
+            //         errs() << "Array address pointer: " << GEPI->getName() << "\n";
+            //     }
+            // }
+
+            std::string varName = Ptr->getName().str();
+
+            // Check if the variable is an array address pointer
+            if (arrayAddressPtrs->find(varName) != arrayAddressPtrs->end()) {
+                assignedInsideArrayAddressPtrs->insert(varName);
+            }
+        }
+    }
+
+    // Check if the instruction is a load instruction
+    if (auto *LI = dyn_cast<LoadInst>(&I)) {
+        // Check if it loads from a variable
+        if (Value *Ptr = LI->getPointerOperand()) {
+            if (!Ptr->hasName()) {
+                return;
+            }
+            std::string varName = Ptr->getName().str();
+
+            // Skip the iteration variable
+            if (varName == iterationVariable) {
+                return;
+            }
+
+            if (arrayAddressPtrs->find(varName) != arrayAddressPtrs->end()) {
+                loadedInsideArrayAddressPtrs->insert(varName);
+            }
+        }
+    }
+}
+
 PreservedAnalyses LoopParallelizationPass::run(Function &F,
   FunctionAnalysisManager &AM) {
     errs() << "Hello" << "\n";
@@ -23,123 +202,46 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
     // LI.print(OS);
     
     for (Loop *L : LI) {
-        // Sets to store variables
+        std::string iterationVariable;
+
         std::set<std::string> declaredInsideLoopVars;
         std::set<std::string> assignedBeforeLoopVars;
         std::set<std::string> assignedOutsideLoopVars;
 
+        std::set<std::string> initializedInsideLoopVars;
         std::set<std::string> assignedInsideLoopVars;
+        std::set<std::string> loadedInsideLoopVars;
+
         std::set<std::string> assignedInsideLoopVectors;
         std::set<std::string> assignedInsideLoopArrays;
         std::set<std::string> assignedInsideLoopBasicTypes;
 
+        std::set<std::string> arrayAddressPtrs;
+        std::set<std::string> assignedInsideArrayAddressPtrs;
+        std::set<std::string> loadedInsideArrayAddressPtrs;
+        // TODO check if loop address points to something other than i
+
         BasicBlock *Preheader = L->getLoopPreheader();
         BasicBlock *Header = L->getHeader();
-
-        std::string iterationVariable;
 
         if (!Preheader) {
             errs() << "Loop does not have a preheader, skipping.\n";
             continue;
         }
+        errs() << "\n\n================================================================\n";
+        errs() << "Loop found in function: " << F.getName() << "\n";
+        errs() << "Location: " << getLoopLocationString(Header) << "\n\n";
 
-        // Get the first instruction in the conditional block
-        if (!Header->empty()) {
-            Instruction &FirstInst = Header->front();
-            if (auto *SI = dyn_cast<LoadInst>(&FirstInst)) {
-                if (Value *Ptr = SI->getPointerOperand()) {
-                    if (Ptr->hasName()) {
-                        errs() << "Iteration variable: " << Ptr->getName() << "\n";
-                        iterationVariable = Ptr->getName().str();
-                    }
-                }
-            }
-            errs() << "First instruction in the conditional block: ";
-            FirstInst.print(errs());
-            errs() << "\n";
-        } else {
-            errs() << "Conditional block is empty.\n";
-        }
-
-        // Find all blocks that dominate the preheader
-        for (BasicBlock &BB : F) {
-            if (DT.dominates(&BB, Preheader)) { // Check if BB dominates the preheader
-                for (Instruction &I : BB) {
-                    // Look for store instructions (assignments)
-                    if (auto *SI = dyn_cast<StoreInst>(&I)) {
-                        if (Value *Ptr = SI->getPointerOperand()) {
-                            if (Ptr->hasName()) {
-                                assignedBeforeLoopVars.insert(Ptr->getName().str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        iterationVariable = getIterationVariable(Header);
+        errs() << "Iteration variable: " << iterationVariable << "\n\n";
 
         // Collect variables used inside the loop
         for (BasicBlock *BB : L->blocks()) {
             for (Instruction &I : *BB) {
-                if (auto *AI = dyn_cast<AllocaInst>(&I)) {
-                    if (AI->hasName()) {
-                        declaredInsideLoopVars.insert(AI->getName().str());
-                    }
-                }
-
-                // Instruction that assign array location to a variable
-                if (auto *GEPI = dyn_cast<GetElementPtrInst>(&I)) {
-                    if (GEPI->hasName()) {
-                        declaredInsideLoopVars.insert(GEPI->getName().str());
-                    }
-                    if (Value *Ptr = GEPI->getPointerOperand()) {
-                        if (Ptr->hasName()) {
-                            assignedInsideLoopArrays.insert(Ptr->getName().str());
-                        }
-                    }
-                }
-
-                if (auto *SI = dyn_cast<StoreInst>(&I)) {
-                    if (Value *Ptr = SI->getPointerOperand()) {
-
-                        if (!Ptr->hasName()) {
-                            continue;    
-                        }
-                        std::string varName = Ptr->getName().str();
-
-                        if (varName == iterationVariable) {
-                            continue; // Skip the iteration variable
-                        }
-
-                        assignedInsideLoopVars.insert(varName);
-                        
-                        Type *Ty = Ptr->getType();
-
-                        // Check if it's an array
-                        if (Ty->isArrayTy()) {
-                            assignedInsideLoopArrays.insert(varName);
-                        }
-                        // // Check if it's a vector
-                        // else if (Ty->isVectorTy()) {
-                        //     assignedInsideLoopVectors.insert(varName);
-                        // }
-                        // Check if it's a basic type (int, float, etc.)
-                        else if (Ty->isSingleValueType()) {
-                            assignedInsideLoopBasicTypes.insert(varName);
-                        }
-                        // TODO: include pointer conditions
-                    }
-                }
+                handleArrays(I, iterationVariable, &assignedInsideLoopArrays, &arrayAddressPtrs, &assignedInsideArrayAddressPtrs, &loadedInsideArrayAddressPtrs);
+                handleVariables(I, iterationVariable, &initializedInsideLoopVars, &loadedInsideLoopVars, &arrayAddressPtrs);  
             }
         }
-
-
-        std::set<std::string> intersection;
-        for (const auto &Var : assignedBeforeLoopVars) {
-            if (assignedInsideLoopVars.find(Var) != assignedInsideLoopVars.end()) {
-                intersection.insert(Var);
-            }
-        }
-
         
         
         std::set<std::string> dangerousVars;
@@ -148,9 +250,6 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
                 dangerousVars.insert(Var);
             }
         }
-
-        // Print the results
-        errs() << "Loop:\n" << L->getHeader()->getName() << "\n";
 
         errs() << "  Variables assigned inside the loop:\n";
         for (const auto &Var : assignedInsideLoopVars) {
@@ -172,38 +271,24 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
             errs() << "    " << Var << "\n";
         }
 
-        errs() << "  Variables assigned before the loop:\n";
-        for (const auto &Var : assignedBeforeLoopVars) {
+        errs() << "  Variables initialized inside the loop:\n";
+        for (const auto &Var : initializedInsideLoopVars) {
             errs() << "    " << Var << "\n";
         }
 
-        errs() << "  Intersection of variables:\n";
-        for (const auto &Var : intersection) {
+        errs() << "  Variables loaded inside the loop:\n";
+        for (const auto &Var : loadedInsideLoopVars) {
             errs() << "    " << Var << "\n";
         }
 
-        errs() << "  Variables declared inside the loop:\n";
-        for (const auto &Var : declaredInsideLoopVars) {
+        errs() << "  Variables assigned inside the loop (array address pointers):\n";
+        for (const auto &Var : assignedInsideArrayAddressPtrs) {
             errs() << "    " << Var << "\n";
         }
-
-        errs() << " Dangerous variables:\n";
-        for (const auto &Var : dangerousVars) {
+        errs() << "  Variables loaded inside the loop (array address pointers):\n";
+        for (const auto &Var : loadedInsideArrayAddressPtrs) {
             errs() << "    " << Var << "\n";
         }
-
-        for (Instruction &I : *Header) {
-            if (DILocation *Loc = I.getDebugLoc()) { // Check if debug info exists
-                unsigned Line = Loc->getLine();      // Get the line number
-                StringRef File = Loc->getFilename(); // Get the source file name
-                StringRef Directory = Loc->getDirectory(); // Get the directory
-    
-                errs() << "Loop declared at " << Directory << "/" << File
-                       << ":" << Line << "\n";
-                break; // Found the debug info, no need to check further
-            }
-        }
-
         
 
         if(dangerousVars.size() > 0) {
