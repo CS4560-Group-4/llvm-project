@@ -684,7 +684,6 @@ LOOP_PASS("print<ddg>", DDGAnalysisPrinterPass(errs()))
 LOOP_PASS("print<iv-users>", IVUsersPrinterPass(errs()))
 LOOP_PASS("print<loop-cache-cost>", LoopCachePrinterPass(errs()))
 LOOP_PASS("print<loopnest>", LoopNestPrinterPass(errs()))
-LOOP_PASS("loop-parallelization2", LoopParallelization2Pass())
 #undef LOOP_PASS
 
 #ifndef LOOP_PASS_WITH_PARAMS
