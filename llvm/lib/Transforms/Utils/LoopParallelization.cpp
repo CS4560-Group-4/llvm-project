@@ -239,20 +239,25 @@ void LoopParallelizationPass::handleArrays(Instruction &I,
             if (auto *GEPI = dyn_cast<GetElementPtrInst>(Ptr)) {
                 arrayAddressPtrs->insert(GEPI->getName().str());
 
-                std::string arrayName = "undefined loop";
+                std::string arrayName = "undefined";
                 if (Value *Ptr = GEPI->getPointerOperand()) {
                     if (Ptr->hasName()) {
                         arrayName = Ptr->getName().str();
                     }
                 }
-
-                if (Value *index = GEPI->getOperand(2)) {
+                int op = 2;
+                if (GEPI->getNumOperands() < 3) {
+                    op = 1;
+                }
+                if (Value *index = GEPI->getOperand(op)) {
                     if (!doesArrayIndexContainIterationVariable(index, iterationVariable)) {
                         assignedInsideLoopArrays->insert(arrayName);
                     }
 
                     storedInsideArrayAddressPtrs->insert({index, arrayName});
                 }
+                
+                
             }
         }
     }
@@ -273,7 +278,12 @@ void LoopParallelizationPass::handleArrays(Instruction &I,
                     }
                 }
 
-                if (Value *index = GEPI->getOperand(2)) {
+                int op = 2;
+                if (GEPI->getNumOperands() < 3) {
+                    op = 1;
+                }
+
+                if (Value *index = GEPI->getOperand(op)) {
                     if (!doesArrayIndexContainIterationVariable(index, iterationVariable)) {
                         loadedInsideLoopArrays->insert(index->getName().str());
                     }
@@ -293,21 +303,27 @@ void LoopParallelizationPass::handleFunctions(Instruction &I) {
         if (isa<CallInst>(CI) || isa<InvokeInst>(CI)) {
             Function *F = CI->getCalledFunction();
             if (F) {
+                if (F->arg_size() == 0) {
+                    return;
+                }
+
                 errs() << "Problem for parallelization: Called function: " << F->getName() << "\n";
                 errs() << "Location: " << getLocationString(CI->getDebugLoc()) << "\n\n";
                 parallelizable = false;
-            }
-            for (unsigned i = 0; i < F->arg_size(); i++) {
-                Value *argOperand = CI->getArgOperand(i);
-                if (auto *LI = dyn_cast<LoadInst>(argOperand)) {
-                    if (Value *Ptr = LI->getPointerOperand()) {
-                        if (Ptr->hasName()) {
-                            errs() << "    Arg "<< i << ": " << Ptr->getName().str() << "\n";
+
+                for (unsigned i = 0; i < F->arg_size(); i++) {
+                    Value *argOperand = CI->getArgOperand(i);
+                    if (auto *LI = dyn_cast<LoadInst>(argOperand)) {
+                        if (Value *Ptr = LI->getPointerOperand()) {
+                            if (Ptr->hasName()) {
+                                errs() << "    Arg "<< i << ": " << Ptr->getName().str() << "\n";
+                            }
                         }
                     }
                 }
+                errs() << "\n";
             }
-            errs() << "\n";
+            
         }
     }
 }
@@ -385,7 +401,7 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
             for (Instruction &I : *BB) {
                 handleArrays(I, iterationVariable, &assignedInsideLoopArrays, &loadedInsideLoopArrays,  &arrayAddressPtrs, &storedInsideArrayAddressPtrs, &loadedInsideArrayAddressPtrs);
                 handleVariables(I, iterationVariable->getName().str(), &assignedBeforeLoopVars, &assignedInsideLoopVars, &varUseLocations, &loadedInsideLoopVars, &arrayAddressPtrs);  
-                handleFunctions(I);
+                // handleFunctions(I);
             }
         }
         checkSharedVariables(&assignedBeforeLoopVars, &assignedInsideLoopVars, &loadedInsideLoopVars, &varUseLocations);
@@ -394,6 +410,8 @@ PreservedAnalyses LoopParallelizationPass::run(Function &F,
         if (parallelizable) {
             errs() << "No detected race conditions" << "\n";
             errs() << "Loop is parallelizable" << "\n";
+        } else {
+            parallelizable = true;
         }
     }
     return PreservedAnalyses::all();
